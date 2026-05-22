@@ -7,22 +7,26 @@
 [![Python](https://img.shields.io/pypi/pyversions/agentspec)](https://pypi.org/project/agentspec/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Agents are the new software — but testing them is still the wild west. `agentspec` brings the rigor of `pytest` to AI agent workflows: mock tools, record traces, assert on behavior, enforce budgets, and catch runaway loops.
+Agents are the new software — but testing them is still the wild west. `agentspec` brings the rigor of `pytest` to AI agent workflows: give it your agent, mock its tools, and assert on its behavior.
 
 ```python
-def test_booking_agent(agent_recorder):
-    rec = agent_recorder
-    rec.mock_tool("calendar.list_slots", returns={"slots": ["9am", "2pm"]})
-    rec.mock_tool("calendar.book", returns={"status": "confirmed"})
+from agentspec import AgentHarness, TraceAssertions
 
-    rec.call_tool("calendar.list_slots", date="2026-05-22")
-    rec.call_tool("calendar.book", slot="2pm")
-    trace = rec.finish("Meeting booked for 2pm")
+def my_booking_agent(prompt, call_tool):
+    slots = call_tool("calendar.list_slots", date="2026-05-22")
+    call_tool("calendar.book", slot=slots["slots"][1])
+    return "Meeting booked for 2pm"
+
+def test_booking_agent():
+    harness = AgentHarness()
+    harness.mock("calendar.list_slots", returns={"slots": ["9am", "2pm"]})
+    harness.mock("calendar.book", returns={"status": "confirmed"})
+
+    trace = harness.run(my_booking_agent, prompt="Book a meeting")
 
     a = TraceAssertions(trace)
     a.assert_tool_order("calendar.list_slots", "calendar.book")
     a.assert_steps_within(5)
-    a.assert_cost_within(0.05)
     a.assert_no_errors()
 ```
 
@@ -30,6 +34,7 @@ def test_booking_agent(agent_recorder):
 
 | Problem | agentspec Solution |
 |---------|-------------------|
+| "How do I test my agent?" | `AgentHarness` — give it your agent, get a trace |
 | Agent calls wrong tools or in wrong order | `assert_tool_called`, `assert_tool_order` |
 | Agent gets stuck in loops | `LoopDetector` catches consecutive & pattern loops |
 | Agent costs spiral out of control | `BudgetGuard` + `assert_cost_within` |
@@ -53,37 +58,65 @@ pip install agentspec[dev]        # Development (pytest + ruff)
 
 ## Quick Start
 
-### 1. Mock Tools & Assert Behavior
+### 1. Test Any Agent (AgentHarness)
+
+Your agent is just a function that takes `(prompt, call_tool)` and returns a string. `AgentHarness` provides the instrumented `call_tool`, runs your agent, and records everything into a trace.
 
 ```python
-from agentspec import AgentRecorder, TraceAssertions
+from agentspec import AgentHarness, TraceAssertions
+
+def my_agent(prompt, call_tool):
+    results = call_tool("web_search", query=prompt)
+    summary = call_tool("summarize", text=str(results))
+    return f"Summary: {summary}"
 
 def test_search_agent():
-    rec = AgentRecorder(max_steps=10, max_cost=0.10)
+    harness = AgentHarness(max_steps=10, max_cost=0.10)
+    harness.mock("web_search", returns={"results": ["doc1", "doc2"]})
+    harness.mock("summarize", returns="Here's a summary...")
 
-    # Mock external tools
-    rec.mock_tool("web_search", returns={"results": ["doc1", "doc2"]})
-    rec.mock_tool("summarize", returns="Here's a summary...")
+    trace = harness.run(my_agent, prompt="python testing")
 
-    # Simulate agent execution
-    rec.record_llm_call(model="gpt-4o-mini", prompt_tokens=100, completion_tokens=50, cost=0.003)
-    rec.call_tool("web_search", query="python testing")
-    rec.record_llm_call(model="gpt-4o-mini", prompt_tokens=200, completion_tokens=80, cost=0.005)
-    rec.call_tool("summarize", text="doc1 content")
-    trace = rec.finish("Here's a summary...")
-
-    # Assert on the trace
     a = TraceAssertions(trace)
     a.assert_tool_called("web_search", times=1)
     a.assert_tool_order("web_search", "summarize")
     a.assert_steps_within(5)
-    a.assert_cost_within(0.05)
-    a.assert_output_contains("summary")
+    a.assert_output_contains("Summary")
     a.assert_no_errors()
-    a.assert_no_repeated_tool()
 ```
 
-### 2. Live LLM Integration (DeepSeek/OpenAI)
+Or as a one-liner:
+
+```python
+from agentspec import run_agent_test
+
+trace = run_agent_test(
+    my_agent,
+    prompt="python testing",
+    mock_tools={"web_search": ["doc1"], "summarize": "summary"},
+)
+```
+
+### 2. Test with Adapter Protocol
+
+Any class with a `.run(prompt, call_tool)` method works:
+
+```python
+class TravelAgent:
+    def run(self, prompt, call_tool, **kwargs):
+        weather = call_tool("get_weather", city="Shanghai")
+        if weather["temp"] > 30:
+            return "Pack light clothes!"
+        return "Bring a jacket."
+
+def test_travel_agent():
+    harness = AgentHarness()
+    harness.mock("get_weather", returns={"temp": 35})
+    trace = harness.run(TravelAgent(), prompt="Shanghai trip")
+    TraceAssertions(trace).assert_output_contains("light clothes")
+```
+
+### 3. Live LLM Integration (DeepSeek/OpenAI)
 
 ```python
 from openai import OpenAI
@@ -232,6 +265,9 @@ jobs:
 
 ### Core
 
+- **AgentHarness** — Give it your agent, mock its tools, get a recorded trace
+- **`run_agent_test()`** — One-liner for testing callable agents
+- **AgentAdapter protocol** — Any class with `.run(prompt, call_tool)` is testable
 - **ExecutionTrace** — Record every tool call, LLM call, cost, and timing
 - **MockTool / MockToolRegistry** — Mock any tool with returns, raises, or side effects
 - **TraceAssertions** — 12 assertion methods for tool calls, order, cost, output, errors
@@ -247,7 +283,7 @@ jobs:
 
 ### Developer Experience
 
-- **pytest Plugin** — `agent_recorder`, `mock_tools`, `assert_trace`, `mcp_schema_validator` fixtures
+- **pytest Plugin** — `agent_harness`, `agent_recorder`, `mock_tools`, `assert_trace`, `mcp_schema_validator` fixtures
 - **HTML Reports** — Self-contained trace visualization with timeline, charts, dark/light theme
 - **CI Integration** — GitHub Actions summary, cost reports, budget gates
 - **Terminal Output** — Compact trace summary with box drawing
@@ -296,16 +332,19 @@ jobs:
 ```
 agentspec/
 ├── __init__.py           # Public API
+├── harness.py            # AgentHarness + test_agent() — main entry point
 ├── trace.py              # ExecutionTrace, ToolCall, LLMCall
 ├── mock.py               # MockTool, MockToolRegistry
 ├── assertions.py         # TraceAssertions
-├── recorder.py           # AgentRecorder
+├── recorder.py           # AgentRecorder (low-level recording)
 ├── budget.py             # BudgetGuard
 ├── loop_detector.py      # LoopDetector
 ├── visualize.py          # HTML reports + terminal output
 ├── ci.py                 # CI/CD helpers
 ├── plugin.py             # pytest plugin
 ├── mcp.py                # MCP server testing
+├── adapters/
+│   └── base.py           # AgentAdapter / AsyncAgentAdapter protocols
 ├── integrations/
 │   ├── openai_patch.py   # OpenAI client monkey-patch
 │   └── agent_runner.py   # Tool-use agent loop

@@ -99,6 +99,30 @@ def mcp_schema_validator():
     return MCPSchemaValidator
 
 
+@pytest.fixture
+def agent_harness():
+    """Provides an AgentHarness for testing agents.
+
+    Usage in tests::
+
+        def test_my_agent(agent_harness):
+            agent_harness.mock("search", returns=["doc1"])
+
+            def my_agent(prompt, call_tool):
+                return str(call_tool("search", query=prompt))
+
+            trace = agent_harness.run(my_agent, prompt="test")
+            assert trace.total_steps == 1
+    """
+    from agentspec.harness import AgentHarness
+
+    harness = AgentHarness()
+    yield harness
+    trace = harness._recorder.trace
+    if trace.steps or trace.llm_calls:
+        _collected_traces.append(trace)
+
+
 # ---------------------------------------------------------------------------
 # Session-finish hook: write combined HTML report
 # ---------------------------------------------------------------------------
