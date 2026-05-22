@@ -27,6 +27,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.30"]
+mcp = ["mcp>=1.0"]
 dev = ["pytest>=8.0", "ruff>=0.4"]
 
 [project.entry-points.pytest11]

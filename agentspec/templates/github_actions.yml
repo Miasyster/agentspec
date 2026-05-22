@@ -1,0 +1,27 @@
+# Copy this to .github/workflows/agent-tests.yml
+#
+# This workflow runs your agent tests with agentspec in CI.
+# Set your LLM provider API key as a repository secret.
+
+name: Agent Tests
+
+on: [push, pull_request]
+
+jobs:
+  test-agents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install agentspec
+      - run: pip install -r requirements.txt
+        if: hashFiles('requirements.txt') != ''
+      - run: python -m pytest tests/ --agentspec-ci --agentspec-budget 1.0 --tb=short
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Add other provider keys as needed:
+          # DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
